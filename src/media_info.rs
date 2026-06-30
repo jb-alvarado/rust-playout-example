@@ -1,5 +1,6 @@
 use anyhow::Result;
 use ffmpeg_next::{Rational, Rescale, codec, format, media};
+use log::{error, info};
 
 struct MediaInfo {
     duration_seconds: Option<f64>,
@@ -9,13 +10,13 @@ struct MediaInfo {
 
 pub(crate) fn print_media_info(path: &str) {
     match read_media_info(path) {
-        Ok(info) => eprintln!(
+        Ok(info) => info!(
             "playing: {path} (length: {}, fps: {}, resolution: {})",
             format_duration(info.duration_seconds),
             format_fps(info.fps),
             format_resolution(info.resolution)
         ),
-        Err(error) => eprintln!("playing: {path} (metadata unavailable: {error})"),
+        Err(error) => error!("playing: {path} (metadata unavailable: {error})"),
     }
 }
 

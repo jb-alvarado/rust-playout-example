@@ -16,7 +16,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use ffmpeg_next::util::log::{self, Level};
+use env_logger::{Builder, Env};
+use ffmpeg_next::util::log::{self as ff_log, Level};
+use log::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ClipResult {
@@ -143,7 +145,7 @@ impl Playout {
 
 fn init_ffmpeg() -> Result<()> {
     ffmpeg_next::init().context("failed to initialize FFmpeg")?;
-    log::set_level(Level::Warning);
+    ff_log::set_level(Level::Warning);
     Ok(())
 }
 
@@ -167,8 +169,21 @@ fn play_to_output<O: FrameOutput>(
     }
 }
 
+fn init_logger() {
+    let env = Env::default()
+        .filter_or("MY_LOG_LEVEL", "trace")
+        .write_style_or("MY_LOG_STYLE", "always");
+
+    Builder::from_env(env)
+        .format_timestamp(None)
+        .format_level(true)
+        .format_target(false)
+        .init();
+}
+
 fn main() -> Result<()> {
-    env_logger::init();
+    init_logger();
+
     let args = Args::parse();
     if args.inputs.is_empty() {
         return Err(anyhow!("please provide at least one input file"));
@@ -219,7 +234,7 @@ fn main() -> Result<()> {
         match playout.play(path, seek_seconds, live.as_mut())? {
             ClipResult::Played => {}
             ClipResult::Fallback { reason } => {
-                eprintln!("failed while playing {path}: {reason}; fallback generated");
+                error!("failed while playing {path}: {reason}; fallback generated");
             }
             ClipResult::Stopped => return Ok(()),
         }

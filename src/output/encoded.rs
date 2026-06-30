@@ -180,6 +180,7 @@ impl EncodedOutput {
             return Ok(());
         }
 
+        self.align_audio_buffer_to_frame_pts(frame.pts())?;
         if self.audio_buffer[0].is_empty() {
             self.audio_buffer_pts = frame.pts();
         }
@@ -193,6 +194,28 @@ impl EncodedOutput {
         }
 
         self.write_complete_audio_frames()
+    }
+
+    fn align_audio_buffer_to_frame_pts(&mut self, frame_pts: Option<i64>) -> Result<()> {
+        let Some(frame_pts) = frame_pts else {
+            return Ok(());
+        };
+        let Some(buffer_pts) = self.audio_buffer_pts else {
+            return Ok(());
+        };
+        if self.audio_buffer[0].is_empty() {
+            return Ok(());
+        }
+
+        let expected_pts = buffer_pts + self.audio_buffer[0].len() as i64;
+        if frame_pts != expected_pts {
+            self.pad_audio_buffer()?;
+            if self.audio_buffer[0].is_empty() {
+                self.audio_buffer_pts = Some(frame_pts);
+            }
+        }
+
+        Ok(())
     }
 
     pub(super) fn write_vtt_subtitles(
