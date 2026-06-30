@@ -493,6 +493,7 @@ dependencies = [
  "clap",
  "env_logger",
  "ffmpeg-next",
+ "glob",
  "log",
  "sdl2",
 ]

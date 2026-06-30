@@ -14,13 +14,31 @@ It:
 
 This is an architectural example, not a production-ready 24/7 playout system.
 
+## Docker build
+
+Build the application in a Debian Trixie container and export the binary to
+`target/docker/rust-playout-example`:
+
+```bash
+docker compose build
+docker compose up
+```
+
+The Compose service only builds and copies the release binary. It does not run
+the playout application. The Docker build uses `--no-default-features`, so the
+exported binary does not include SDL2 desktop playback.
+
+```bash
+./target/docker/rust-playout-example --help
+```
+
 ## Requirements
 
 Debian/Ubuntu:
 
 ```bash
 sudo apt install pkg-config clang libavformat-dev libavcodec-dev \
-  libavutil-dev libswscale-dev libswresample-dev libsdl2-dev
+  libavdevice-dev libavfilter-dev libavutil-dev libswscale-dev libswresample-dev libsdl2-dev libclang-dev
 ```
 
 Fedora:
@@ -35,6 +53,13 @@ sudo dnf install ffmpeg-devel SDL2-devel clang pkgconf-pkg-config
 cargo build
 ```
 
+Desktop playback is enabled by default. To build the same feature set as the
+Docker build, disable default features:
+
+```bash
+cargo build --release --no-default-features
+```
+
 ## Usage
 
 Write a media file:
@@ -43,6 +68,15 @@ Write a media file:
 cargo run -- \
   --output output.mp4 \
   input1.mp4 input2.mp4 input3.mp3
+```
+
+Inputs can also be directories or glob patterns. Directory inputs are expanded
+to supported media files in sorted order; glob matches are sorted as well:
+
+```bash
+cargo run -- \
+  --output output.mp4 \
+  media/day1 media/day2 "media/**/*.mp4"
 ```
 
 Publish an RTMP stream:
@@ -133,5 +167,4 @@ ffmpeg -re -i live-source.mp4 -c copy -f flv rtmp://127.0.0.1:1935/live/input
 
 When a publisher connects, file playback output switches to the RTMP live input.
 When the live input ends or stops delivering frames for a few seconds, file
-playback output resumes. `--rtmp-live` is currently supported for encoded
-outputs, not `--desktop`.
+playback output resumes.

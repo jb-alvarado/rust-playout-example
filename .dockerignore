@@ -1,0 +1,7 @@
+/.git
+/target
+/output
+/media
+/.agents
+/.codex
+*.log

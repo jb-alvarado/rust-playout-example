@@ -1,10 +1,14 @@
+#[cfg(feature = "desktop")]
 mod desktop;
 mod encoded;
 mod hls;
 mod vtt;
 
 use crate::config::{HlsVariant, OutputConfig};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+#[cfg(feature = "desktop")]
+use anyhow::anyhow;
+#[cfg(feature = "desktop")]
 use desktop::{DesktopFrameSender, DesktopOutput};
 use encoded::{EncodedFormat, EncodedOutput};
 use ffmpeg_next::frame;
@@ -47,6 +51,7 @@ pub(crate) struct Output {
 
 enum OutputKind {
     Encoded(EncodedOutput),
+    #[cfg(feature = "desktop")]
     Desktop(DesktopOutput),
 }
 
@@ -75,6 +80,7 @@ impl Output {
         })
     }
 
+    #[cfg(feature = "desktop")]
     pub(crate) fn open_desktop(cfg: &OutputConfig) -> Result<Self> {
         Ok(Self {
             kind: OutputKind::Desktop(DesktopOutput::open(cfg)?),
@@ -84,6 +90,7 @@ impl Output {
     pub(crate) fn audio_frame_size(&self) -> usize {
         match &self.kind {
             OutputKind::Encoded(output) => output.audio_frame_size(),
+            #[cfg(feature = "desktop")]
             OutputKind::Desktop(output) => output.audio_frame_size(),
         }
     }
@@ -91,6 +98,7 @@ impl Output {
     pub(crate) fn encode_video(&mut self, frame: &frame::Video) -> Result<()> {
         match &mut self.kind {
             OutputKind::Encoded(output) => output.encode_video(frame),
+            #[cfg(feature = "desktop")]
             OutputKind::Desktop(output) => output.encode_video(frame),
         }
     }
@@ -98,6 +106,7 @@ impl Output {
     pub(crate) fn encode_audio(&mut self, frame: &frame::Audio) -> Result<()> {
         match &mut self.kind {
             OutputKind::Encoded(output) => output.encode_audio(frame),
+            #[cfg(feature = "desktop")]
             OutputKind::Desktop(output) => output.encode_audio(frame),
         }
     }
@@ -105,14 +114,17 @@ impl Output {
     pub(crate) fn finish(self) -> Result<()> {
         match self.kind {
             OutputKind::Encoded(output) => output.finish(),
+            #[cfg(feature = "desktop")]
             OutputKind::Desktop(output) => output.finish(),
         }
     }
 
+    #[cfg(feature = "desktop")]
     pub(crate) fn is_desktop(&self) -> bool {
         matches!(self.kind, OutputKind::Desktop(_))
     }
 
+    #[cfg(feature = "desktop")]
     pub(crate) fn run_desktop<T, F>(&mut self, operation: F) -> Result<T>
     where
         T: Send + 'static,
@@ -148,6 +160,7 @@ impl FrameOutput for Output {
             OutputKind::Encoded(output) => {
                 output.write_vtt_subtitles(media_path, output_start_ms, source_start_ms)
             }
+            #[cfg(feature = "desktop")]
             OutputKind::Desktop(_) => Ok(()),
         }
     }

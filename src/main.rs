@@ -7,7 +7,7 @@ mod output;
 mod playout;
 
 use crate::{
-    cli::Args,
+    cli::{Args, resolve_inputs},
     config::OutputConfig,
     live::{LiveOverrideOutput, LiveReceiver, spawn_rtmp_listener},
     media_info::print_media_info,
@@ -43,6 +43,7 @@ impl Playout {
         Ok(Self::with_output(config, output, fallback_duration))
     }
 
+    #[cfg(feature = "desktop")]
     fn open_desktop(config: OutputConfig, fallback_duration: f64) -> Result<Self> {
         Self::validate_fallback_duration(fallback_duration)?;
         init_ffmpeg()?;
@@ -87,6 +88,7 @@ impl Playout {
         seek_seconds: Option<f64>,
         live: &mut Option<LiveReceiver>,
     ) -> Result<ClipResult> {
+        #[cfg(feature = "desktop")]
         if self.output.is_desktop() {
             let config = self.config.clone();
             let fallback_duration = self.fallback_duration;
@@ -200,8 +202,11 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
     if args.inputs.is_empty() {
-        return Err(anyhow!("please provide at least one input file"));
+        return Err(anyhow!(
+            "please provide at least one input file, directory, or glob pattern"
+        ));
     }
+    let inputs = resolve_inputs(&args.inputs)?;
     if !args.seek.is_finite() || args.seek < 0.0 {
         return Err(anyhow!("--seek must be a non-negative number"));
     }
@@ -213,8 +218,17 @@ fn main() -> Result<()> {
 
     let config = OutputConfig::default();
     let live_config = config.clone();
-    let mut playout = if args.desktop {
-        Playout::open_desktop(config, args.fallback_duration)?
+    let mut playout = if args.desktop() {
+        #[cfg(feature = "desktop")]
+        {
+            Playout::open_desktop(config, args.fallback_duration)?
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            return Err(anyhow!(
+                "--desktop is not available because this binary was built without the desktop feature"
+            ));
+        }
     } else if let Some(playlist) = args.hls.as_deref() {
         Playout::open_hls(
             playlist,
@@ -237,7 +251,7 @@ fn main() -> Result<()> {
         .clone()
         .map(|url| spawn_rtmp_listener(url, live_config));
 
-    for (index, path) in args.inputs.iter().enumerate() {
+    for (index, path) in inputs.iter().enumerate() {
         print_media_info(path);
         let seek_seconds = (index == 0 && args.seek > 0.0).then_some(args.seek);
         match playout.play(path, seek_seconds, &mut live)? {

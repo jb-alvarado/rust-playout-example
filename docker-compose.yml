@@ -1,0 +1,8 @@
+services:
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rust-playout-example-builder:trixie
+    volumes:
+      - ./target/docker:/artifacts
