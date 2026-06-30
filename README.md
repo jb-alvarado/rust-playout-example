@@ -1,35 +1,32 @@
-# ffmpeg-lib-playout-example
+# Rust Playout Example
 
-Ein bewusst einfaches Beispiel, wie man das OBS-Prinzip ohne FIFO/Pipes/ffmpeg-Prozesse mit FFmpeg-Libraries aufbauen kann.
+A small Rust example for continuous audio and video playout using the FFmpeg
+libraries.
 
-Dieses Beispiel:
+It:
 
-- öffnet eine Playlist aus lokalen Dateien
-- dekodiert Video und Audio über `libavformat`/`libavcodec`
-- skaliert Video auf ein fixes Zielformat über `libswscale`
-- resampelt Audio über `libswresample`
-- erzeugt bei fehlendem Video Schwarzbild
-- erzeugt bei fehlendem Audio Stille
-- gleicht unterschiedlich lange Audio-/Videospuren aus
-- normalisiert die Quell-Framerate auf die konfigurierte Ausgabe-FPS
-- vergibt eigene durchlaufende PTS-Werte
-- encodiert und muxt in eine Ausgabedatei
-- kann Video und Audio optional direkt über SDL2 ausgeben
+- reads a playlist of local media files
+- decodes, scales, and resamples audio and video
+- generates continuous timestamps
+- outputs in real time to a media file or RTMP stream
+- generates black video and silence for missing media streams
+- uses a configurable fallback when an input is missing or cannot be decoded
 
-Es ist **kein fertiger 24/7-Playout**, sondern ein Architekturbeispiel.
+This is an architectural example, not a production-ready 24/7 playout system.
 
-## Voraussetzungen
+## Requirements
 
 Debian/Ubuntu:
 
 ```bash
-sudo apt install -y pkg-config clang libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libsdl2-dev
+sudo apt install pkg-config clang libavformat-dev libavcodec-dev \
+  libavutil-dev libswscale-dev libswresample-dev libsdl2-dev
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install -y ffmpeg-devel SDL2-devel clang pkgconf-pkg-config
+sudo dnf install ffmpeg-devel SDL2-devel clang pkgconf-pkg-config
 ```
 
 ## Build
@@ -38,30 +35,37 @@ sudo dnf install -y ffmpeg-devel SDL2-devel clang pkgconf-pkg-config
 cargo build
 ```
 
-Mit Desktop-Ausgabe:
+## Usage
 
-```bash
-cargo build --features desktop
-```
-
-## Beispiel
+Write a media file:
 
 ```bash
 cargo run -- \
-  --output out.mp4 \
+  --output output.mp4 \
   input1.mp4 input2.mp4 input3.mp3
 ```
 
-RTMP wäre konzeptionell ebenfalls über `libavformat` möglich, z.B. mit Output-URL:
+Publish an RTMP stream:
 
 ```bash
-cargo run -- --output rtmp://localhost/live/stream input1.mp4 input2.mp4
+cargo run -- \
+  --output rtmp://127.0.0.1/live/stream \
+  input1.mp4 input2.mp4
 ```
 
-SDL2-Desktop-Ausgabe:
+RTMP output automatically uses the FLV container.
+
+Play through an SDL2 window:
 
 ```bash
-cargo run --features desktop -- --desktop input1.mp4 input2.mp4
+cargo run -- --desktop input1.mp4 input2.mp4
 ```
 
-Mit `RUST_LOG=debug` werden Padding und Video-Queue-Unterläufe protokolliert.
+The fallback duration defaults to 10 seconds and can be changed:
+
+```bash
+cargo run -- \
+  --output output.mp4 \
+  --fallback-duration 5 \
+  input1.mp4 missing.mp4 input3.mp4
+```

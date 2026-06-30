@@ -36,7 +36,6 @@ impl Playout {
         Ok(Self::with_output(config, output, fallback_duration))
     }
 
-    #[cfg(feature = "desktop")]
     fn open_desktop(config: OutputConfig, fallback_duration: f64) -> Result<Self> {
         Self::validate_fallback_duration(fallback_duration)?;
         ffmpeg_next::init().context("failed to initialize FFmpeg")?;
@@ -62,7 +61,6 @@ impl Playout {
     }
 
     fn play(&mut self, path: &str) -> Result<ClipResult> {
-        #[cfg(feature = "desktop")]
         if self.output.is_desktop() {
             let config = self.config.clone();
             let fallback_duration = self.fallback_duration;
@@ -127,7 +125,6 @@ fn main() -> Result<()> {
     }
 
     let config = OutputConfig::default();
-    #[cfg(feature = "desktop")]
     let mut playout = if args.desktop {
         Playout::open_desktop(config, args.fallback_duration)?
     } else {
@@ -139,14 +136,6 @@ fn main() -> Result<()> {
             args.fallback_duration,
         )?
     };
-    #[cfg(not(feature = "desktop"))]
-    let mut playout = Playout::open(
-        args.output
-            .as_deref()
-            .ok_or_else(|| anyhow!("missing output"))?,
-        config,
-        args.fallback_duration,
-    )?;
 
     for path in &args.inputs {
         eprintln!("playing: {path}");
