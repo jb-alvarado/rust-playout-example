@@ -85,28 +85,42 @@ impl Playout {
         &mut self,
         path: &str,
         seek_seconds: Option<f64>,
-        live: Option<&mut LiveReceiver>,
+        live: &mut Option<LiveReceiver>,
     ) -> Result<ClipResult> {
         if self.output.is_desktop() {
             let config = self.config.clone();
             let fallback_duration = self.fallback_duration;
             let mut timeline = self.timeline;
             let path = path.to_string();
+            let mut live_for_worker = live.take();
             let operation = self.output.run_desktop(move |output| {
-                let result = play_to_output(
-                    &path,
-                    &config,
-                    &mut timeline,
-                    output,
-                    fallback_duration,
-                    seek_seconds,
-                );
-                (result, timeline)
+                let result = if let Some(live) = live_for_worker.as_mut() {
+                    let mut output = LiveOverrideOutput::new(output, live);
+                    play_to_output(
+                        &path,
+                        &config,
+                        &mut timeline,
+                        &mut output,
+                        fallback_duration,
+                        seek_seconds,
+                    )
+                } else {
+                    play_to_output(
+                        &path,
+                        &config,
+                        &mut timeline,
+                        output,
+                        fallback_duration,
+                        seek_seconds,
+                    )
+                };
+                (result, timeline, live_for_worker)
             });
 
             return match operation {
-                Ok((result, timeline)) => {
+                Ok((result, timeline, live_for_worker)) => {
                     self.timeline = timeline;
+                    *live = live_for_worker;
                     result
                 }
                 Err(error) if error.downcast_ref::<PlaybackStopped>().is_some() => {
@@ -116,7 +130,7 @@ impl Playout {
             };
         }
 
-        if let Some(live) = live {
+        if let Some(live) = live.as_mut() {
             let mut output = LiveOverrideOutput::new(&mut self.output, live);
             play_to_output(
                 path,
@@ -191,11 +205,6 @@ fn main() -> Result<()> {
     if !args.seek.is_finite() || args.seek < 0.0 {
         return Err(anyhow!("--seek must be a non-negative number"));
     }
-    if args.desktop && args.rtmp_live.is_some() {
-        return Err(anyhow!(
-            "--rtmp-live is currently supported only for encoded outputs, not --desktop"
-        ));
-    }
     if args.hls_vtt_subtitles && args.hls_variants.is_empty() {
         return Err(anyhow!(
             "--hls-vtt-subtitles requires at least one --hls-variant so subtitles can be linked from master.m3u8"
@@ -231,7 +240,7 @@ fn main() -> Result<()> {
     for (index, path) in args.inputs.iter().enumerate() {
         print_media_info(path);
         let seek_seconds = (index == 0 && args.seek > 0.0).then_some(args.seek);
-        match playout.play(path, seek_seconds, live.as_mut())? {
+        match playout.play(path, seek_seconds, &mut live)? {
             ClipResult::Played => {}
             ClipResult::Fallback { reason } => {
                 error!("failed while playing {path}: {reason}; fallback generated");
