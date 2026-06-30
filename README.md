@@ -115,3 +115,23 @@ cargo run -- \
 ```
 
 `--seek` is specified in seconds and is applied only to the first input file.
+
+Start an RTMP live override listener:
+
+```bash
+cargo run -- \
+  --hls public/live/index.m3u8 \
+  --rtmp-live rtmp://0.0.0.0:1935/live/input \
+  input1.mp4 input2.mp4
+```
+
+Publish a temporary live source into it:
+
+```bash
+ffmpeg -re -i live-source.mp4 -c copy -f flv rtmp://127.0.0.1:1935/live/input
+```
+
+When a publisher connects, file playback output switches to the RTMP live input.
+When the live input ends or stops delivering frames for a few seconds, file
+playback output resumes. `--rtmp-live` is currently supported for encoded
+outputs, not `--desktop`.

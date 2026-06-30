@@ -32,7 +32,19 @@ pub(crate) fn play_clip<O: FrameOutput>(
     output: &mut O,
     seek_seconds: Option<f64>,
 ) -> Result<()> {
-    let mut ictx = format::input(path)?;
+    let ictx = format::input(path)?;
+    play_opened_input(path, ictx, cfg, timeline, output, seek_seconds, Some(path))
+}
+
+pub(crate) fn play_opened_input<O: FrameOutput>(
+    label: &str,
+    mut ictx: format::context::Input,
+    cfg: &OutputConfig,
+    timeline: &mut Timeline,
+    output: &mut O,
+    seek_seconds: Option<f64>,
+    subtitles_media_path: Option<&str>,
+) -> Result<()> {
     let seek_us = seek_seconds.map(seconds_to_microseconds).unwrap_or(0);
     if let Some(seek_seconds) = seek_seconds {
         seek_input(&mut ictx, seek_seconds)?;
@@ -41,7 +53,7 @@ pub(crate) fn play_clip<O: FrameOutput>(
     let video_stream = ictx.streams().best(media::Type::Video);
     let audio_stream = ictx.streams().best(media::Type::Audio);
     if video_stream.is_none() && audio_stream.is_none() {
-        return Err(anyhow!("input contains no audio or video stream"));
+        return Err(anyhow!("{label} contains no audio or video stream"));
     }
 
     let trim_start_us = (seek_us > 0).then_some(seek_us);
@@ -67,11 +79,13 @@ pub(crate) fn play_clip<O: FrameOutput>(
             + div_ceil(i128::from(duration_us) * i128::from(cfg.fps), 1_000_000) as i64
     });
     output.set_video_end(video_end_pts)?;
-    output.write_vtt_subtitles(
-        path,
-        timeline.video_pts * 1_000 / i64::from(cfg.fps),
-        seek_us / 1_000,
-    )?;
+    if let Some(media_path) = subtitles_media_path {
+        output.write_vtt_subtitles(
+            media_path,
+            timeline.video_pts * 1_000 / i64::from(cfg.fps),
+            seek_us / 1_000,
+        )?;
+    }
 
     if video_finished {
         output.video_finished()?;
@@ -104,7 +118,9 @@ pub(crate) fn play_clip<O: FrameOutput>(
     }
 
     if decoded_video_frames == 0 && decoded_audio_samples == 0 {
-        return Err(anyhow!("input produced no decodable audio or video frames"));
+        return Err(anyhow!(
+            "{label} produced no decodable audio or video frames"
+        ));
     }
 
     synchronize_timeline(cfg, timeline, output)

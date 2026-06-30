@@ -97,9 +97,9 @@ impl Default for OutputConfig {
         Self {
             width: 1024,
             height: 576,
-            fps: 12,
+            fps: 25,
             sample_rate: 48_000,
-            video_time_base: Rational(1, 12),
+            video_time_base: Rational(1, 25),
             audio_time_base: Rational(1, 48_000),
         }
     }

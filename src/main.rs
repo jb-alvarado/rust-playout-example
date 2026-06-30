@@ -1,6 +1,7 @@
 mod cli;
 mod clock;
 mod config;
+mod live;
 mod media_info;
 mod output;
 mod playout;
@@ -8,6 +9,7 @@ mod playout;
 use crate::{
     cli::Args,
     config::OutputConfig,
+    live::{LiveOverrideOutput, LiveReceiver, spawn_rtmp_listener},
     media_info::print_media_info,
     output::{FrameOutput, Output, PlaybackStopped},
     playout::{Timeline, play_clip, write_fallback},
@@ -77,7 +79,12 @@ impl Playout {
         }
     }
 
-    fn play(&mut self, path: &str, seek_seconds: Option<f64>) -> Result<ClipResult> {
+    fn play(
+        &mut self,
+        path: &str,
+        seek_seconds: Option<f64>,
+        live: Option<&mut LiveReceiver>,
+    ) -> Result<ClipResult> {
         if self.output.is_desktop() {
             let config = self.config.clone();
             let fallback_duration = self.fallback_duration;
@@ -107,14 +114,26 @@ impl Playout {
             };
         }
 
-        play_to_output(
-            path,
-            &self.config,
-            &mut self.timeline,
-            &mut self.output,
-            self.fallback_duration,
-            seek_seconds,
-        )
+        if let Some(live) = live {
+            let mut output = LiveOverrideOutput::new(&mut self.output, live);
+            play_to_output(
+                path,
+                &self.config,
+                &mut self.timeline,
+                &mut output,
+                self.fallback_duration,
+                seek_seconds,
+            )
+        } else {
+            play_to_output(
+                path,
+                &self.config,
+                &mut self.timeline,
+                &mut self.output,
+                self.fallback_duration,
+                seek_seconds,
+            )
+        }
     }
 
     fn finish(self) -> Result<()> {
@@ -157,6 +176,11 @@ fn main() -> Result<()> {
     if !args.seek.is_finite() || args.seek < 0.0 {
         return Err(anyhow!("--seek must be a non-negative number"));
     }
+    if args.desktop && args.rtmp_live.is_some() {
+        return Err(anyhow!(
+            "--rtmp-live is currently supported only for encoded outputs, not --desktop"
+        ));
+    }
     if args.hls_vtt_subtitles && args.hls_variants.is_empty() {
         return Err(anyhow!(
             "--hls-vtt-subtitles requires at least one --hls-variant so subtitles can be linked from master.m3u8"
@@ -164,6 +188,7 @@ fn main() -> Result<()> {
     }
 
     let config = OutputConfig::default();
+    let live_config = config.clone();
     let mut playout = if args.desktop {
         Playout::open_desktop(config, args.fallback_duration)?
     } else if let Some(playlist) = args.hls.as_deref() {
@@ -183,11 +208,15 @@ fn main() -> Result<()> {
             args.fallback_duration,
         )?
     };
+    let mut live = args
+        .rtmp_live
+        .clone()
+        .map(|url| spawn_rtmp_listener(url, live_config));
 
     for (index, path) in args.inputs.iter().enumerate() {
         print_media_info(path);
         let seek_seconds = (index == 0 && args.seek > 0.0).then_some(args.seek);
-        match playout.play(path, seek_seconds)? {
+        match playout.play(path, seek_seconds, live.as_mut())? {
             ClipResult::Played => {}
             ClipResult::Fallback { reason } => {
                 eprintln!("failed while playing {path}: {reason}; fallback generated");

@@ -39,6 +39,10 @@ pub(crate) struct Args {
     #[arg(long, value_name = "SECONDS", default_value_t = 0.0)]
     pub(crate) seek: f64,
 
+    /// RTMP listen URL for live override, e.g. rtmp://0.0.0.0:1935/live/input
+    #[arg(long, value_name = "URL")]
+    pub(crate) rtmp_live: Option<String>,
+
     /// Duration in seconds used when an input is missing or cannot be decoded
     #[arg(long, default_value_t = 10.0)]
     pub(crate) fallback_duration: f64,
