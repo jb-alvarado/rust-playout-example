@@ -1,5 +1,5 @@
 use crate::{config::OutputConfig, output::FrameOutput};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use ffmpeg_next::{
     Rational, Rescale, codec, format, frame, media,
     software::{resampling, scaling},
@@ -30,8 +30,13 @@ pub(crate) fn play_clip<O: FrameOutput>(
     cfg: &OutputConfig,
     timeline: &mut Timeline,
     output: &mut O,
+    seek_seconds: Option<f64>,
 ) -> Result<()> {
     let mut ictx = format::input(path)?;
+    let seek_us = seek_seconds.map(seconds_to_microseconds).unwrap_or(0);
+    if let Some(seek_seconds) = seek_seconds {
+        seek_input(&mut ictx, seek_seconds)?;
+    }
 
     let video_stream = ictx.streams().best(media::Type::Video);
     let audio_stream = ictx.streams().best(media::Type::Audio);
@@ -39,12 +44,13 @@ pub(crate) fn play_clip<O: FrameOutput>(
         return Err(anyhow!("input contains no audio or video stream"));
     }
 
+    let trim_start_us = (seek_us > 0).then_some(seek_us);
     let mut video = match video_stream {
-        Some(ref stream) => Some(VideoDecoder::new(stream, cfg)?),
+        Some(ref stream) => Some(VideoDecoder::new(stream, cfg, trim_start_us)?),
         None => None,
     };
     let mut audio = match audio_stream {
-        Some(ref stream) => Some(AudioDecoder::new(stream, cfg)?),
+        Some(ref stream) => Some(AudioDecoder::new(stream, cfg, trim_start_us)?),
         None => None,
     };
 
@@ -56,10 +62,16 @@ pub(crate) fn play_clip<O: FrameOutput>(
     let mut decoded_audio_samples = 0_i64;
 
     let video_end_pts = video_duration_us.map(|duration_us| {
+        let duration_us = duration_us.saturating_sub(seek_us);
         timeline.video_pts
             + div_ceil(i128::from(duration_us) * i128::from(cfg.fps), 1_000_000) as i64
     });
     output.set_video_end(video_end_pts)?;
+    output.write_vtt_subtitles(
+        path,
+        timeline.video_pts * 1_000 / i64::from(cfg.fps),
+        seek_us / 1_000,
+    )?;
 
     if video_finished {
         output.video_finished()?;
@@ -96,6 +108,21 @@ pub(crate) fn play_clip<O: FrameOutput>(
     }
 
     synchronize_timeline(cfg, timeline, output)
+}
+
+fn seek_input(ictx: &mut format::context::Input, seek_seconds: f64) -> Result<()> {
+    if !seek_seconds.is_finite() || seek_seconds < 0.0 {
+        return Err(anyhow!("seek position must be a non-negative number"));
+    }
+
+    let seek_ts = seconds_to_microseconds(seek_seconds);
+    ictx.seek(seek_ts, ..seek_ts)
+        .or_else(|_| ictx.seek(seek_ts, ..))
+        .with_context(|| format!("failed to seek first input to {seek_seconds:.3} seconds"))
+}
+
+fn seconds_to_microseconds(seconds: f64) -> i64 {
+    (seconds * 1_000_000.0).round().max(0.0) as i64
 }
 
 fn finish_video<O: FrameOutput>(
@@ -154,6 +181,14 @@ fn receive_video_frames<O: FrameOutput>(
 ) -> Result<()> {
     let mut raw = frame::Video::empty();
     while video.decoder.receive_frame(&mut raw).is_ok() {
+        if is_before_trim_start(
+            raw.timestamp().or_else(|| raw.pts()),
+            video.frame_rate_converter.input_time_base,
+            video.trim_start_us,
+        ) {
+            continue;
+        }
+
         let output_frames = video
             .frame_rate_converter
             .output_frames(raw.timestamp().or_else(|| raw.pts()));
@@ -181,6 +216,14 @@ fn receive_audio_frames<O: FrameOutput>(
 ) -> Result<()> {
     let mut raw = frame::Audio::empty();
     while audio.decoder.receive_frame(&mut raw).is_ok() {
+        if is_before_trim_start(
+            raw.timestamp().or_else(|| raw.pts()),
+            audio.input_time_base,
+            audio.trim_start_us,
+        ) {
+            continue;
+        }
+
         let mut converted = frame::Audio::empty();
         audio.resampler.run(&raw, &mut converted)?;
         let samples = converted.samples() as i64;
@@ -192,17 +235,37 @@ fn receive_audio_frames<O: FrameOutput>(
     Ok(())
 }
 
+fn is_before_trim_start(
+    timestamp: Option<i64>,
+    time_base: Rational,
+    trim_start_us: Option<i64>,
+) -> bool {
+    let Some(trim_start_us) = trim_start_us else {
+        return false;
+    };
+    let Some(timestamp) = timestamp else {
+        return false;
+    };
+
+    timestamp.rescale(time_base, Rational(1, 1_000_000)) < trim_start_us
+}
+
 struct VideoDecoder {
     decoder: codec::decoder::Video,
     scaler: scaling::Context,
     frame_rate_converter: FrameRateConverter,
+    trim_start_us: Option<i64>,
 }
 
 impl VideoDecoder {
-    fn new(stream: &format::stream::Stream, cfg: &OutputConfig) -> Result<Self> {
+    fn new(
+        stream: &format::stream::Stream,
+        cfg: &OutputConfig,
+        trim_start_us: Option<i64>,
+    ) -> Result<Self> {
         let mut ctx = codec::context::Context::from_parameters(stream.parameters())?;
         ctx.set_threading(codec::threading::Config::kind(
-            codec::threading::Type::Slice,
+            codec::threading::Type::Frame,
         ));
         let decoder = ctx.decoder().video()?;
         let scaler = scaling::Context::get(
@@ -218,6 +281,7 @@ impl VideoDecoder {
             decoder,
             scaler,
             frame_rate_converter: FrameRateConverter::new(stream.time_base(), cfg.fps),
+            trim_start_us,
         })
     }
 }
@@ -259,10 +323,16 @@ impl FrameRateConverter {
 struct AudioDecoder {
     decoder: codec::decoder::Audio,
     resampler: resampling::Context,
+    input_time_base: Rational,
+    trim_start_us: Option<i64>,
 }
 
 impl AudioDecoder {
-    fn new(stream: &format::stream::Stream, cfg: &OutputConfig) -> Result<Self> {
+    fn new(
+        stream: &format::stream::Stream,
+        cfg: &OutputConfig,
+        trim_start_us: Option<i64>,
+    ) -> Result<Self> {
         let ctx = codec::context::Context::from_parameters(stream.parameters())?;
         let decoder = ctx.decoder().audio()?;
         let resampler = resampling::Context::get(
@@ -273,7 +343,12 @@ impl AudioDecoder {
             ChannelLayout::STEREO,
             cfg.sample_rate,
         )?;
-        Ok(Self { decoder, resampler })
+        Ok(Self {
+            decoder,
+            resampler,
+            input_time_base: stream.time_base(),
+            trim_start_us,
+        })
     }
 }
 

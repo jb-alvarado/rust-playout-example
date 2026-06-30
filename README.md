@@ -5,7 +5,7 @@ libraries.
 
 It:
 
-- reads a playlist of local media files
+- reads a list of files
 - decodes, scales, and resamples audio and video
 - generates continuous timestamps
 - outputs in real time to a media file or RTMP stream
@@ -55,6 +55,41 @@ cargo run -- \
 
 RTMP output automatically uses the FLV container.
 
+Publish a live HLS playlist:
+
+```bash
+cargo run -- \
+  --hls public/live/index.m3u8 \
+  input1.mp4 input2.mp4
+```
+
+HLS uses two-second segments and keeps the latest five entries in the playlist.
+
+Publish adaptive HLS with a master playlist and multiple renditions:
+
+```bash
+cargo run -- \
+  --hls public/live/index.m3u8 \
+  --hls-variant 360p:640x360:800k:96k \
+  --hls-variant 720p:1280x720:2800k:128k \
+  --hls-vtt-subtitles \
+  input1.mp4 input2.mp4
+```
+
+With `--hls-variant`, FFmpeg writes `public/live/master.m3u8` plus one
+variant playlist per rendition in the same directory, for example
+`public/live/360p_index.m3u8` and `public/live/720p_index.m3u8`. Segments are
+also written to the same directory, for example `public/live/360p_segment_000.ts`.
+The format is
+`NAME:WIDTHxHEIGHT:VIDEO_BITRATE[:AUDIO_BITRATE]`; audio bitrate defaults to
+`128k`. Variant names must be unique and may contain only ASCII letters,
+numbers, `_`, and `-`.
+
+With `--hls-vtt-subtitles`, sidecar WebVTT subtitles are included when a `.vtt`
+file with the same base name as an input exists. For example, `input1.mp4` uses
+`input1.vtt`. Missing sidecar files are ignored. This option requires at least
+one `--hls-variant`, because the subtitles are linked from `master.m3u8`.
+
 Play through an SDL2 window:
 
 ```bash
@@ -69,3 +104,14 @@ cargo run -- \
   --fallback-duration 5 \
   input1.mp4 missing.mp4 input3.mp4
 ```
+
+Start playback at an offset in the first input only:
+
+```bash
+cargo run -- \
+  --output output.mp4 \
+  --seek 30 \
+  input1.mp4 input2.mp4
+```
+
+`--seek` is specified in seconds and is applied only to the first input file.
