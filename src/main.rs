@@ -1,24 +1,22 @@
-mod cli;
-mod clock;
-mod config;
-mod live;
-mod media_info;
-mod output;
-mod playout;
-
-use crate::{
-    cli::{Args, resolve_inputs},
-    config::OutputConfig,
-    live::{LiveOverrideOutput, LiveReceiver, spawn_rtmp_listener},
-    media_info::print_media_info,
-    output::{FrameOutput, Output, PlaybackStopped},
-    playout::{Timeline, play_clip, write_fallback},
-};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use env_logger::{Builder, Env};
 use ffmpeg_next::util::log::{self as ff_log, Level};
 use log::*;
+
+mod input;
+mod output;
+mod playout;
+mod utils;
+
+use crate::{
+    cli::{Args, resolve_inputs},
+    config::OutputConfig,
+    input::live::{LiveOverrideOutput, LiveReceiver, spawn_rtmp_listener},
+    output::{FrameOutput, Output, PlaybackStopped},
+    playout::{Timeline, play_clip, write_fallback},
+    utils::{cli, clock, config, media_info::print_media_info},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ClipResult {

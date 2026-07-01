@@ -1,8 +1,9 @@
-use ffmpeg_next::{Rational, Rescale, rescale};
 use std::{
     thread,
     time::{Duration, Instant},
 };
+
+use ffmpeg_next::{Rational, Rescale, rescale};
 
 pub(crate) struct PlayoutClock {
     started_at: Option<Instant>,

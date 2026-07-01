@@ -1,5 +1,11 @@
-use super::{FrameOutput, PlaybackStopped};
-use crate::config::OutputConfig;
+use std::{
+    collections::VecDeque,
+    mem::size_of,
+    sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
+    thread,
+    time::{Duration, Instant},
+};
+
 use anyhow::{Result, anyhow};
 use ffmpeg_next::{Rational, Rescale, frame};
 use sdl2::{
@@ -11,13 +17,9 @@ use sdl2::{
     render::{Canvas, Texture},
     video::Window,
 };
-use std::{
-    collections::VecDeque,
-    mem::size_of,
-    sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel},
-    thread,
-    time::{Duration, Instant},
-};
+
+use super::{FrameOutput, PlaybackStopped};
+use crate::config::OutputConfig;
 
 const AUDIO_CHANNELS: usize = 2;
 const AUDIO_PREBUFFER_MS: u64 = 100;

@@ -1,12 +1,14 @@
-use crate::config::HlsVariant;
-use anyhow::{Context, Result, anyhow};
-use clap::Parser;
-use glob::glob;
 use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
+
+use anyhow::{Context, Result, anyhow};
+use clap::Parser;
+use glob::glob;
+
+use crate::config::HlsVariant;
 
 #[derive(Parser, Debug)]
 pub(crate) struct Args {

@@ -1,8 +1,5 @@
-use super::{hls, vtt};
-use crate::{
-    clock::PlayoutClock,
-    config::{HlsVariant, OutputConfig},
-};
+use std::{collections::VecDeque, fs, path::Path};
+
 use anyhow::{Context, Result, anyhow};
 use ffmpeg::{
     Packet, codec, format, frame,
@@ -13,7 +10,12 @@ use ffmpeg::{
     },
 };
 use ffmpeg_next as ffmpeg;
-use std::{collections::VecDeque, fs, path::Path};
+
+use super::{hls, vtt};
+use crate::{
+    clock::PlayoutClock,
+    config::{HlsVariant, OutputConfig},
+};
 
 pub(super) struct EncodedOutput {
     octx: format::context::Output,

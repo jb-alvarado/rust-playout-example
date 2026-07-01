@@ -1,11 +1,12 @@
-use crate::{config::OutputConfig, output::FrameOutput};
 use anyhow::{Context, Result, anyhow};
 use ffmpeg_next::{
     Rational, Rescale, codec, format, frame, media,
     software::{resampling, scaling},
     util::{channel_layout::ChannelLayout, format::pixel::Pixel, format::sample::Sample},
 };
-use log::info;
+use log::debug;
+
+use crate::{config::OutputConfig, output::FrameOutput};
 
 #[derive(Clone, Copy)]
 pub(crate) struct Timeline {
@@ -409,7 +410,7 @@ fn synchronize_timeline<O: FrameOutput>(
     )?;
 
     if video_frames > 0 {
-        info!(
+        debug!(
             "padding video with {video_frames} black frame(s) ({:.6} s) to synchronize the timeline",
             video_frames as f64 / f64::from(cfg.fps)
         );
@@ -417,7 +418,7 @@ fn synchronize_timeline<O: FrameOutput>(
     write_black_frames(cfg, timeline, output, video_frames)?;
 
     if audio_samples > 0 {
-        info!(
+        debug!(
             "padding audio with {audio_samples} silent sample(s) ({:.6} s) to synchronize the timeline",
             audio_samples as f64 / f64::from(cfg.sample_rate)
         );

@@ -1,8 +1,9 @@
-use anyhow::{Context, Result, anyhow};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+use anyhow::{Context, Result, anyhow};
 
 pub(super) struct VttCue {
     pub(super) start_ms: i64,

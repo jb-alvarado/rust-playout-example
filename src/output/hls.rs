@@ -1,7 +1,9 @@
-use crate::config::HlsVariant;
+use std::{collections::HashSet, fs, io::ErrorKind, path::Path, ptr};
+
 use anyhow::{Context, Result, anyhow};
 use ffmpeg_next as ffmpeg;
-use std::{collections::HashSet, fs, io::ErrorKind, path::Path, ptr};
+
+use crate::config::HlsVariant;
 
 pub(super) fn playlist_path(path: &str, variants: &[HlsVariant]) -> Result<String> {
     if variants.is_empty() {
@@ -91,7 +93,10 @@ mod tests {
 
     #[test]
     fn playlist_path_is_unchanged_without_variants() {
-        assert_eq!(playlist_path("live/index.m3u8", &[]).unwrap(), "live/index.m3u8");
+        assert_eq!(
+            playlist_path("live/index.m3u8", &[]).unwrap(),
+            "live/index.m3u8"
+        );
     }
 
     #[test]
@@ -134,9 +139,6 @@ mod tests {
     #[test]
     fn var_stream_map_links_subtitles_to_first_variant_only() {
         let map = var_stream_map(&[variant("high"), variant("low")], true);
-        assert_eq!(
-            map,
-            "v:0,a:0,s:0,sgroup:subs,name:high v:1,a:1,name:low"
-        );
+        assert_eq!(map, "v:0,a:0,s:0,sgroup:subs,name:high v:1,a:1,name:low");
     }
 }

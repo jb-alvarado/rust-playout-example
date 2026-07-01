@@ -1,18 +1,3 @@
-use crate::{
-    config::OutputConfig,
-    output::FrameOutput,
-    playout::{Timeline, play_opened_input},
-};
-use anyhow::{Context, Result};
-use ffmpeg_next::{
-    Dictionary, Error as FfmpegError, ffi, format, frame,
-    util::{
-        channel_layout::ChannelLayout,
-        format::sample::{Sample, Type as SampleType},
-        interrupt,
-    },
-};
-use log::{error, info, warn};
 use std::{
     ffi::CString,
     ptr,
@@ -23,6 +8,23 @@ use std::{
     },
     thread,
     time::{Duration, Instant},
+};
+
+use anyhow::{Context, Result};
+use ffmpeg_next::{
+    Dictionary, Error as FfmpegError, ffi, format, frame,
+    util::{
+        channel_layout::ChannelLayout,
+        format::sample::{Sample, Type as SampleType},
+        interrupt,
+    },
+};
+use log::{error, info, warn};
+
+use crate::{
+    config::OutputConfig,
+    output::FrameOutput,
+    playout::{Timeline, play_opened_input},
 };
 
 const LIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -430,14 +432,16 @@ impl FrameOutput for LiveFrameSender {
     }
 
     fn encode_video(&mut self, frame: &frame::Video) -> Result<()> {
-        self.last_frame_ms.store(monotonic_millis(), Ordering::Relaxed);
+        self.last_frame_ms
+            .store(monotonic_millis(), Ordering::Relaxed);
         self.tx
             .send(LiveEvent::Video(self.session_id, frame.clone()))
             .context("failed to send live video frame")
     }
 
     fn encode_audio(&mut self, frame: &frame::Audio) -> Result<()> {
-        self.last_frame_ms.store(monotonic_millis(), Ordering::Relaxed);
+        self.last_frame_ms
+            .store(monotonic_millis(), Ordering::Relaxed);
         self.tx
             .send(LiveEvent::Audio(self.session_id, frame.clone()))
             .context("failed to send live audio frame")
@@ -543,7 +547,9 @@ fn spawn_live_watchdog(
             thread::sleep(LIVE_WATCHDOG_INTERVAL);
 
             let last_frame_ms = last_frame_ms.load(Ordering::Relaxed);
-            if monotonic_millis().saturating_sub(last_frame_ms) >= LIVE_IDLE_TIMEOUT.as_millis() as u64 {
+            if monotonic_millis().saturating_sub(last_frame_ms)
+                >= LIVE_IDLE_TIMEOUT.as_millis() as u64
+            {
                 info!("live input disconnected or idle; restarting ingest server");
                 abort.store(true, Ordering::Relaxed);
                 return;

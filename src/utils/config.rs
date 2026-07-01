@@ -1,5 +1,6 @@
-use ffmpeg_next::Rational;
 use std::str::FromStr;
+
+use ffmpeg_next::Rational;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HlsVariant {
