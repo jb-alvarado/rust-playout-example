@@ -73,6 +73,20 @@ Docker build, disable default features:
 cargo build --release --no-default-features
 ```
 
+## Logging
+
+Application logs use the Rust `log` facade via `env_logger`. The default app
+level is controlled by `MY_LOG_LEVEL` and defaults to `trace`.
+
+FFmpeg's internal `av_log` output is redirected into the same logger with the
+target `ffmpeg`. Its default level is `warning`, so noisy informational messages
+such as HLS temporary file writes are suppressed. Override it with
+`MY_FFMPEG_LOG_LEVEL` when needed:
+
+```bash
+MY_FFMPEG_LOG_LEVEL=info cargo run -- --output output.mp4 input.mp4
+```
+
 ## Usage
 
 Write a media file:

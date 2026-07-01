@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use env_logger::{Builder, Env};
-use ffmpeg_next::util::log::{self as ff_log, Level};
 use log::*;
 
 mod input;
@@ -15,7 +14,7 @@ use crate::{
     input::live::{LiveOverrideOutput, LiveReceiver, spawn_rtmp_listener},
     output::{FrameOutput, Output, PlaybackStopped},
     playout::{Timeline, play_clip, write_fallback},
-    utils::{cli, clock, config, media_info::print_media_info},
+    utils::{cli, clock, config, logging, media_info::print_media_info},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,7 +158,7 @@ impl Playout {
 
 fn init_ffmpeg() -> Result<()> {
     ffmpeg_next::init().context("failed to initialize FFmpeg")?;
-    ff_log::set_level(Level::Warning);
+    logging::init();
     Ok(())
 }
 
