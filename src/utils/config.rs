@@ -105,3 +105,58 @@ impl Default for OutputConfig {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutputSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl FromStr for OutputSize {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (width, height) = value
+            .split_once(':')
+            .or_else(|| value.split_once('x'))
+            .ok_or_else(|| "size must use WIDTH:HEIGHT or WIDTHxHEIGHT".to_string())?;
+        let width = width
+            .parse::<u32>()
+            .map_err(|_| "width must be a positive integer".to_string())?;
+        let height = height
+            .parse::<u32>()
+            .map_err(|_| "height must be a positive integer".to_string())?;
+        if width == 0 || height == 0 {
+            return Err("width and height must be greater than zero".to_string());
+        }
+        if width % 2 != 0 || height % 2 != 0 {
+            return Err("width and height must be even for YUV420 output".to_string());
+        }
+        Ok(Self { width, height })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OutputSize;
+
+    #[test]
+    fn parses_output_size_with_colon() {
+        let size = "1280:720".parse::<OutputSize>().unwrap();
+        assert_eq!(size.width, 1280);
+        assert_eq!(size.height, 720);
+    }
+
+    #[test]
+    fn parses_output_size_with_x() {
+        let size = "1920x1080".parse::<OutputSize>().unwrap();
+        assert_eq!(size.width, 1920);
+        assert_eq!(size.height, 1080);
+    }
+
+    #[test]
+    fn rejects_odd_output_size() {
+        assert!("1023:576".parse::<OutputSize>().is_err());
+        assert!("1024:575".parse::<OutputSize>().is_err());
+    }
+}

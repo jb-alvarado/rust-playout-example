@@ -213,7 +213,11 @@ fn main() -> Result<()> {
         ));
     }
 
-    let config = OutputConfig::default();
+    let mut config = OutputConfig::default();
+    if let Some(size) = args.size {
+        config.width = size.width;
+        config.height = size.height;
+    }
     let live_config = config.clone();
     let mut playout = if args.desktop() {
         #[cfg(feature = "desktop")]

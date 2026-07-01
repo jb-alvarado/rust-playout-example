@@ -216,9 +216,24 @@ fn receive_video_frames<O: FrameOutput>(
 
         let mut scaled = frame::Video::empty();
         video.scaler.run(&raw, &mut scaled)?;
+        let mut padded = if video.needs_padding() {
+            let mut padded = black_video_frame(video.output_width, video.output_height);
+            copy_video_frame(
+                &scaled,
+                &mut padded,
+                video.x_offset,
+                video.y_offset,
+                video.scaled_width,
+                video.scaled_height,
+            );
+            Some(padded)
+        } else {
+            None
+        };
         for _ in 0..output_frames {
-            scaled.set_pts(Some(timeline.video_pts));
-            output.encode_video(&scaled)?;
+            let frame = padded.as_mut().unwrap_or(&mut scaled);
+            frame.set_pts(Some(timeline.video_pts));
+            output.encode_video(frame)?;
             timeline.video_pts += 1;
             *decoded_frames += 1;
         }
@@ -271,6 +286,12 @@ fn is_before_trim_start(
 struct VideoDecoder {
     decoder: codec::decoder::Video,
     scaler: scaling::Context,
+    output_width: u32,
+    output_height: u32,
+    scaled_width: u32,
+    scaled_height: u32,
+    x_offset: u32,
+    y_offset: u32,
     frame_rate_converter: FrameRateConverter,
     trim_start_us: Option<i64>,
 }
@@ -286,22 +307,87 @@ impl VideoDecoder {
             codec::threading::Type::Frame,
         ));
         let decoder = ctx.decoder().video()?;
+        let scale = VideoScale::new(decoder.width(), decoder.height(), cfg);
         let scaler = scaling::Context::get(
             decoder.format(),
             decoder.width(),
             decoder.height(),
             Pixel::YUV420P,
-            cfg.width,
-            cfg.height,
+            scale.scaled_width,
+            scale.scaled_height,
             scaling::flag::Flags::BILINEAR,
         )?;
         Ok(Self {
             decoder,
             scaler,
+            output_width: scale.output_width,
+            output_height: scale.output_height,
+            scaled_width: scale.scaled_width,
+            scaled_height: scale.scaled_height,
+            x_offset: scale.x_offset,
+            y_offset: scale.y_offset,
             frame_rate_converter: FrameRateConverter::new(stream.time_base(), cfg.fps),
             trim_start_us,
         })
     }
+
+    fn needs_padding(&self) -> bool {
+        self.scaled_width != self.output_width
+            || self.scaled_height != self.output_height
+            || self.x_offset != 0
+            || self.y_offset != 0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VideoScale {
+    output_width: u32,
+    output_height: u32,
+    scaled_width: u32,
+    scaled_height: u32,
+    x_offset: u32,
+    y_offset: u32,
+}
+
+impl VideoScale {
+    fn new(input_width: u32, input_height: u32, cfg: &OutputConfig) -> Self {
+        let (scaled_width, scaled_height) =
+            fit_dimensions(cfg.width, cfg.height, input_width, input_height);
+        let x_offset = even((cfg.width.saturating_sub(scaled_width)) / 2);
+        let y_offset = even((cfg.height.saturating_sub(scaled_height)) / 2);
+
+        Self {
+            output_width: cfg.width,
+            output_height: cfg.height,
+            scaled_width,
+            scaled_height,
+            x_offset,
+            y_offset,
+        }
+    }
+}
+
+fn fit_dimensions(
+    max_width: u32,
+    max_height: u32,
+    aspect_width: u32,
+    aspect_height: u32,
+) -> (u32, u32) {
+    let max_width = max_width.max(2);
+    let max_height = max_height.max(2);
+    let width_limited_height =
+        ((u64::from(max_width) * u64::from(aspect_height)) / u64::from(aspect_width)) as u32;
+    if width_limited_height <= max_height {
+        (even(max_width).max(2), even(width_limited_height).max(2))
+    } else {
+        let height_limited_width =
+            ((u64::from(max_height) * u64::from(aspect_width)) / u64::from(aspect_height)) as u32;
+        (even(height_limited_width).max(2), even(max_height).max(2))
+    }
+}
+
+fn even(value: u32) -> u32 {
+    value & !1
 }
 
 struct FrameRateConverter {
@@ -473,7 +559,7 @@ fn write_black_frames<O: FrameOutput>(
     frames: i64,
 ) -> Result<()> {
     for _ in 0..frames {
-        let mut black = black_video_frame(cfg);
+        let mut black = black_video_frame_for_config(cfg);
         black.set_pts(Some(timeline.video_pts));
         output.encode_video(&black)?;
         timeline.video_pts += 1;
@@ -481,8 +567,12 @@ fn write_black_frames<O: FrameOutput>(
     Ok(())
 }
 
-fn black_video_frame(cfg: &OutputConfig) -> frame::Video {
-    let mut frame = frame::Video::new(Pixel::YUV420P, cfg.width, cfg.height);
+fn black_video_frame_for_config(cfg: &OutputConfig) -> frame::Video {
+    black_video_frame(cfg.width, cfg.height)
+}
+
+fn black_video_frame(width: u32, height: u32) -> frame::Video {
+    let mut frame = frame::Video::new(Pixel::YUV420P, width, height);
     fill_plane(&mut frame, 0, 16);
     fill_plane(&mut frame, 1, 128);
     fill_plane(&mut frame, 2, 128);
@@ -505,6 +595,34 @@ fn fill_plane(frame: &mut frame::Video, plane: usize, value: u8) {
     for y in 0..height {
         let start = y * stride;
         data[start..start + width].fill(value);
+    }
+}
+
+fn copy_video_frame(
+    source: &frame::Video,
+    target: &mut frame::Video,
+    x_offset: u32,
+    y_offset: u32,
+    width: u32,
+    height: u32,
+) {
+    for plane in 0..target.planes() {
+        let chroma = if plane == 0 { 1 } else { 2 };
+        let plane_x = (x_offset / chroma) as usize;
+        let plane_y = (y_offset / chroma) as usize;
+        let plane_width = (width / chroma) as usize;
+        let plane_height = (height / chroma) as usize;
+        let source_stride = source.stride(plane);
+        let target_stride = target.stride(plane);
+        let source_data = source.data(plane);
+        let target_data = target.data_mut(plane);
+
+        for y in 0..plane_height {
+            let source_start = y * source_stride;
+            let target_start = (plane_y + y) * target_stride + plane_x;
+            target_data[target_start..target_start + plane_width]
+                .copy_from_slice(&source_data[source_start..source_start + plane_width]);
+        }
     }
 }
 
@@ -546,7 +664,7 @@ fn write_silence<O: FrameOutput>(
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameRateConverter, Rational, padding_to_sync, parse_duration_us};
+    use super::{FrameRateConverter, Rational, fit_dimensions, padding_to_sync, parse_duration_us};
 
     #[test]
     fn pads_short_audio_to_video_duration() {
@@ -561,6 +679,16 @@ mod tests {
     #[test]
     fn rounds_both_streams_to_a_shared_boundary() {
         assert_eq!(padding_to_sync(30, 44_101, 30, 44_100).unwrap(), (1, 1_469));
+    }
+
+    #[test]
+    fn fits_four_by_three_into_sixteen_by_nine() {
+        assert_eq!(fit_dimensions(1024, 576, 640, 480), (768, 576));
+    }
+
+    #[test]
+    fn fits_vertical_video_into_sixteen_by_nine() {
+        assert_eq!(fit_dimensions(1024, 576, 1080, 1920), (324, 576));
     }
 
     #[test]

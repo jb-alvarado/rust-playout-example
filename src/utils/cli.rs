@@ -8,7 +8,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use glob::glob;
 
-use crate::config::HlsVariant;
+use crate::config::{HlsVariant, OutputSize};
 
 #[derive(Parser, Debug)]
 pub(crate) struct Args {
@@ -62,6 +62,10 @@ pub(crate) struct Args {
     /// Seek position in seconds for the first input file only
     #[arg(long, value_name = "SECONDS", default_value_t = 0.0)]
     pub(crate) seek: f64,
+
+    /// Output size as WIDTH:HEIGHT. Defaults to 1024:576.
+    #[arg(long, value_name = "WIDTH:HEIGHT")]
+    pub(crate) size: Option<OutputSize>,
 
     /// RTMP listen URL for live override, e.g. rtmp://0.0.0.0:1935/live/input
     #[arg(long, value_name = "URL")]

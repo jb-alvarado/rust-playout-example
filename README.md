@@ -97,6 +97,15 @@ cargo run -- \
   input1.mp4 input2.mp4 input3.mp3
 ```
 
+The output size defaults to `1024:576`. Override it with `--size WIDTH:HEIGHT`:
+
+```bash
+cargo run -- \
+  --output output.mp4 \
+  --size 1920:1080 \
+  input1.mp4
+```
+
 Inputs can also be directories or glob patterns. Directory inputs are expanded
 to supported media files in sorted order; glob matches are sorted as well:
 
@@ -105,6 +114,9 @@ cargo run -- \
   --output output.mp4 \
   media/day1 media/day2 "media/**/*.mp4"
 ```
+
+Video inputs keep their source aspect ratio. If the source aspect does not match
+the configured output size, the frame is centered and padded with black bars.
 
 Publish an RTMP stream:
 
