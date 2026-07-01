@@ -488,6 +488,11 @@ fn open_audio_stream(
 fn open_subtitle_stream(octx: &mut format::context::Output) -> Result<SubtitleOutputStream> {
     let mut stream = octx.add_stream(codec::Id::WEBVTT)?;
     stream.set_time_base(Rational(1, 1_000));
+    // `add_stream` only sets up an encoder-backed stream; WebVTT subtitles here
+    // are muxed as pre-formatted text packets without an actual encoder, so the
+    // safe API has no way to mark the stream's codec parameters as a subtitle
+    // stream. Setting `codec_type`/`codec_id` on the raw `AVCodecParameters` is
+    // the only way to make the muxer (and downstream HLS players) recognize it.
     unsafe {
         let codecpar = (*stream.as_mut_ptr()).codecpar;
         (*codecpar).codec_type = ffmpeg::ffi::AVMediaType::AVMEDIA_TYPE_SUBTITLE;

@@ -14,6 +14,19 @@ It:
 
 This is an architectural example, not a production-ready 24/7 playout system.
 
+## FFmpeg bindings
+
+This project uses [`ffmpeg-next`](https://crates.io/crates/ffmpeg-next). A
+handful of low-level operations (RTMP listen-mode input, WebVTT subtitle
+stream setup) fall back to raw FFmpeg FFI because `ffmpeg-next` doesn't yet
+expose a safe API for them.
+
+[`ffmpeg-the-third`](https://github.com/shssoichiro/ffmpeg-the-third) is an
+actively maintained fork worth revisiting if `ffmpeg-next` development stalls
+again or if its Dictionary/format API improvements (which would remove some
+of our unsafe workarounds) become worth the migration effort. No action is
+needed today; both crates currently receive updates.
+
 ## Docker build
 
 Build the application in a Debian Trixie container and export the binary to

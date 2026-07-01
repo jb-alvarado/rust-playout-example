@@ -115,3 +115,72 @@ fn parse_milliseconds(value: &str) -> Result<i64> {
     }
     Ok(millis.parse::<i64>()?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse, parse_timestamp};
+
+    #[test]
+    fn parses_timestamp_with_hours() {
+        assert_eq!(parse_timestamp("01:02:03.456").unwrap(), 3_723_456);
+    }
+
+    #[test]
+    fn parses_timestamp_without_hours() {
+        assert_eq!(parse_timestamp("02:03.456").unwrap(), 123_456);
+    }
+
+    #[test]
+    fn parses_timestamp_with_comma_decimal_separator() {
+        assert_eq!(parse_timestamp("00:00:01,500").unwrap(), 1_500);
+    }
+
+    #[test]
+    fn pads_short_millisecond_fractions() {
+        assert_eq!(parse_timestamp("00:00:01.5").unwrap(), 1_500);
+        assert_eq!(parse_timestamp("00:00:01.05").unwrap(), 1_050);
+    }
+
+    #[test]
+    fn rejects_timestamp_without_milliseconds() {
+        assert!(parse_timestamp("00:00:01").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_timestamp() {
+        assert!(parse_timestamp("not-a-time").is_err());
+        assert!(parse_timestamp("1:2:3:4.000").is_err());
+    }
+
+    #[test]
+    fn parses_single_cue() {
+        let content = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.500\nHello\nWorld\n";
+        let cues = parse(content).unwrap();
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].start_ms, 1_000);
+        assert_eq!(cues[0].end_ms, 2_500);
+        assert_eq!(cues[0].text, "Hello\nWorld");
+    }
+
+    #[test]
+    fn skips_notes_and_regions_and_empty_cues() {
+        let content = "WEBVTT\n\nNOTE this is a comment\n\nSTYLE\n::cue { color: red }\n\n1\n00:00:01.000 --> 00:00:02.000\n\n2\n00:00:03.000 --> 00:00:04.000\nActual cue\n";
+        let cues = parse(content).unwrap();
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].text, "Actual cue");
+    }
+
+    #[test]
+    fn rejects_cue_with_end_before_start() {
+        let content = "1\n00:00:05.000 --> 00:00:01.000\nBroken cue\n";
+        assert!(parse(content).is_err());
+    }
+
+    #[test]
+    fn normalizes_crlf_line_endings() {
+        let content = "WEBVTT\r\n\r\n1\r\n00:00:01.000 --> 00:00:02.000\r\nHi\r\n";
+        let cues = parse(content).unwrap();
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].text, "Hi");
+    }
+}

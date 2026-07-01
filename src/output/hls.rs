@@ -74,3 +74,69 @@ pub(super) fn var_stream_map(variants: &[HlsVariant], include_subtitles: bool) -
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn variant(name: &str) -> HlsVariant {
+        HlsVariant {
+            name: name.to_string(),
+            width: 1_280,
+            height: 720,
+            video_bitrate: 3_000_000,
+            audio_bitrate: 128_000,
+        }
+    }
+
+    #[test]
+    fn playlist_path_is_unchanged_without_variants() {
+        assert_eq!(playlist_path("live/index.m3u8", &[]).unwrap(), "live/index.m3u8");
+    }
+
+    #[test]
+    fn playlist_path_prefixes_file_name_with_variants() {
+        assert_eq!(
+            playlist_path("live/index.m3u8", &[variant("high")]).unwrap(),
+            "live/%v_index.m3u8"
+        );
+    }
+
+    #[test]
+    fn playlist_path_rejects_missing_file_name() {
+        assert!(playlist_path("/", &[variant("high")]).is_err());
+    }
+
+    #[test]
+    fn validate_variants_rejects_duplicate_names() {
+        assert!(validate_variants(&[variant("high"), variant("high")]).is_err());
+    }
+
+    #[test]
+    fn validate_variants_accepts_unique_names() {
+        assert!(validate_variants(&[variant("high"), variant("low")]).is_ok());
+    }
+
+    #[test]
+    fn segment_pattern_prefixes_file_name() {
+        assert_eq!(
+            segment_pattern("live/index.m3u8"),
+            "live/%v_segment_%03d.ts"
+        );
+    }
+
+    #[test]
+    fn var_stream_map_without_subtitles() {
+        let map = var_stream_map(&[variant("high"), variant("low")], false);
+        assert_eq!(map, "v:0,a:0,name:high v:1,a:1,name:low");
+    }
+
+    #[test]
+    fn var_stream_map_links_subtitles_to_first_variant_only() {
+        let map = var_stream_map(&[variant("high"), variant("low")], true);
+        assert_eq!(
+            map,
+            "v:0,a:0,s:0,sgroup:subs,name:high v:1,a:1,name:low"
+        );
+    }
+}

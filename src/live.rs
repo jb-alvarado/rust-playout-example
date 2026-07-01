@@ -12,21 +12,26 @@ use ffmpeg_next::{
         interrupt,
     },
 };
-use log::{error, info};
+use log::{error, info, warn};
 use std::{
     ffi::CString,
     ptr,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 const LIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
 const LIVE_WATCHDOG_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Number of RTMP reader threads that outlived their `abort` signal and are
+/// being reaped in the background. Exposed only via log messages for now;
+/// see the usage in `run_rtmp_listener` for context.
+static STUCK_LIVE_WORKERS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct LiveReceiver {
     rx: Receiver<LiveEvent>,
@@ -310,32 +315,47 @@ impl<'a, O: FrameOutput> LiveOverrideOutput<'a, O> {
     }
 
     fn file_video_pts(&mut self, source_pts: i64) -> i64 {
-        if let Some(resume_seconds) = self.live.file_resume_at_seconds {
-            let source_seconds = source_pts as f64 / f64::from(self.live.fps);
-            let shift_seconds = *self
-                .live
-                .file_resume_shift_seconds
-                .get_or_insert(resume_seconds - source_seconds);
-            ((source_seconds + shift_seconds) * f64::from(self.live.fps)).round() as i64
-        } else {
-            source_pts.max(self.live.video_pts)
-        }
-        .max(self.live.video_pts)
+        resume_pts(
+            self.live.fps,
+            self.live.file_resume_at_seconds,
+            &mut self.live.file_resume_shift_seconds,
+            source_pts,
+            self.live.video_pts,
+        )
     }
 
     fn file_audio_pts(&mut self, source_pts: i64) -> i64 {
-        if let Some(resume_seconds) = self.live.file_resume_at_seconds {
-            let source_seconds = source_pts as f64 / f64::from(self.live.sample_rate);
-            let shift_seconds = *self
-                .live
-                .file_resume_shift_seconds
-                .get_or_insert(resume_seconds - source_seconds);
-            ((source_seconds + shift_seconds) * f64::from(self.live.sample_rate)).round() as i64
-        } else {
-            source_pts.max(self.live.audio_pts)
-        }
-        .max(self.live.audio_pts)
+        resume_pts(
+            self.live.sample_rate,
+            self.live.file_resume_at_seconds,
+            &mut self.live.file_resume_shift_seconds,
+            source_pts,
+            self.live.audio_pts,
+        )
     }
+}
+
+/// Shared resume-pts computation for both video and audio.
+///
+/// `resume_shift_seconds` is intentionally a single value shared between the
+/// video and audio streams: whichever stream resumes first fixes the shift,
+/// and the other stream reuses it so both tracks stay aligned to the same
+/// point in the file.
+fn resume_pts(
+    rate: u32,
+    resume_at_seconds: Option<f64>,
+    resume_shift_seconds: &mut Option<f64>,
+    source_pts: i64,
+    floor_pts: i64,
+) -> i64 {
+    if let Some(resume_seconds) = resume_at_seconds {
+        let source_seconds = source_pts as f64 / f64::from(rate);
+        let shift_seconds = *resume_shift_seconds.get_or_insert(resume_seconds - source_seconds);
+        ((source_seconds + shift_seconds) * f64::from(rate)).round() as i64
+    } else {
+        source_pts.max(floor_pts)
+    }
+    .max(floor_pts)
 }
 
 impl<O: FrameOutput> FrameOutput for LiveOverrideOutput<'_, O> {
@@ -410,14 +430,14 @@ impl FrameOutput for LiveFrameSender {
     }
 
     fn encode_video(&mut self, frame: &frame::Video) -> Result<()> {
-        self.last_frame_ms.store(now_millis(), Ordering::Relaxed);
+        self.last_frame_ms.store(monotonic_millis(), Ordering::Relaxed);
         self.tx
             .send(LiveEvent::Video(self.session_id, frame.clone()))
             .context("failed to send live video frame")
     }
 
     fn encode_audio(&mut self, frame: &frame::Audio) -> Result<()> {
-        self.last_frame_ms.store(now_millis(), Ordering::Relaxed);
+        self.last_frame_ms.store(monotonic_millis(), Ordering::Relaxed);
         self.tx
             .send(LiveEvent::Audio(self.session_id, frame.clone()))
             .context("failed to send live audio frame")
@@ -433,7 +453,7 @@ fn run_rtmp_listener(url: String, cfg: OutputConfig, tx: Sender<LiveEvent>) {
         match open_rtmp_listener(&url, Arc::clone(&abort)) {
             Ok(ictx) => {
                 session_id += 1;
-                let last_frame_ms = Arc::new(AtomicU64::new(now_millis()));
+                let last_frame_ms = Arc::new(AtomicU64::new(monotonic_millis()));
                 let watchdog = spawn_live_watchdog(Arc::clone(&last_frame_ms), Arc::clone(&abort));
 
                 if tx.send(LiveEvent::Started(session_id)).is_err() {
@@ -482,9 +502,22 @@ fn run_rtmp_listener(url: String, cfg: OutputConfig, tx: Sender<LiveEvent>) {
                 if worker_finished {
                     let _ = worker.join();
                 } else {
-                    info!(
-                        "live input reader is still blocked; restarting ingest server without waiting"
+                    // The interrupt callback only aborts FFmpeg I/O between reads; if the
+                    // worker is blocked in a single long-running syscall it may not exit
+                    // promptly. Rather than block the listener loop on `worker.join()`,
+                    // reap it in the background so a stuck reader is still observed (and
+                    // its thread reclaimed) once it eventually unblocks or errors out.
+                    let stuck_count = STUCK_LIVE_WORKERS.fetch_add(1, Ordering::Relaxed) + 1;
+                    warn!(
+                        "live input reader is still blocked; restarting ingest server without waiting ({stuck_count} stuck reader(s) pending cleanup)"
                     );
+                    thread::spawn(move || {
+                        let _ = worker.join();
+                        let remaining = STUCK_LIVE_WORKERS.fetch_sub(1, Ordering::Relaxed) - 1;
+                        info!(
+                            "previously stuck live input reader exited ({remaining} stuck reader(s) still pending)"
+                        );
+                    });
                 }
 
                 info!("Restart ingest server after live input ended");
@@ -510,7 +543,7 @@ fn spawn_live_watchdog(
             thread::sleep(LIVE_WATCHDOG_INTERVAL);
 
             let last_frame_ms = last_frame_ms.load(Ordering::Relaxed);
-            if now_millis().saturating_sub(last_frame_ms) >= LIVE_IDLE_TIMEOUT.as_millis() as u64 {
+            if monotonic_millis().saturating_sub(last_frame_ms) >= LIVE_IDLE_TIMEOUT.as_millis() as u64 {
                 info!("live input disconnected or idle; restarting ingest server");
                 abort.store(true, Ordering::Relaxed);
                 return;
@@ -531,6 +564,12 @@ fn open_rtmp_listener(url: &str, abort: Arc<AtomicBool>) -> Result<format::conte
     let interrupt_abort = Arc::clone(&abort);
     let interrupt = interrupt::new(Box::new(move || interrupt_abort.load(Ordering::Relaxed)));
 
+    // `ffmpeg-next`'s safe `format::input_with*` helpers open a file/stream and
+    // return only once the input is fully ready; they provide no way to attach
+    // an interrupt callback before `avformat_open_input` starts blocking in
+    // "listen" mode (which waits for an incoming RTMP publisher). Reaching the
+    // interrupt callback and swapping the auto-allocated dictionary back out
+    // requires driving the C API directly.
     unsafe {
         let mut ps = ffi::avformat_alloc_context();
         if ps.is_null() {
@@ -561,9 +600,53 @@ fn open_rtmp_listener(url: &str, abort: Arc<AtomicBool>) -> Result<format::conte
     }
 }
 
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+/// Monotonic millisecond clock used for idle-timeout tracking.
+///
+/// Uses `Instant` (relative to a fixed process-lifetime epoch) instead of
+/// `SystemTime`/`UNIX_EPOCH` so that system clock adjustments (e.g. NTP jumps)
+/// cannot cause the live watchdog to misfire.
+fn monotonic_millis() -> u64 {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    let epoch = EPOCH.get_or_init(Instant::now);
+    epoch.elapsed().as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resume_pts;
+
+    #[test]
+    fn passes_through_source_pts_before_resume_is_prepared() {
+        assert_eq!(resume_pts(25, None, &mut None, 100, 40), 100);
+    }
+
+    #[test]
+    fn floors_source_pts_at_the_current_timeline_position() {
+        assert_eq!(resume_pts(25, None, &mut None, 10, 40), 40);
+    }
+
+    #[test]
+    fn shifts_source_pts_to_the_resume_point_on_first_call() {
+        let mut shift = None;
+        // Resume at 10s into the file; the live source reports pts 0 (2s @ 25fps).
+        let pts = resume_pts(25, Some(10.0), &mut shift, 0, 0);
+        assert_eq!(pts, 250);
+        assert_eq!(shift, Some(10.0));
+    }
+
+    #[test]
+    fn reuses_an_already_established_shift_for_subsequent_calls() {
+        let mut shift = Some(5.0);
+        // Even though resume_at_seconds now differs, an existing shift wins.
+        let pts = resume_pts(48_000, Some(999.0), &mut shift, 48_000, 0);
+        assert_eq!(pts, 48_000 * 6);
+        assert_eq!(shift, Some(5.0));
+    }
+
+    #[test]
+    fn never_returns_pts_below_the_current_timeline_floor() {
+        let mut shift = Some(-5.0);
+        let pts = resume_pts(25, Some(1.0), &mut shift, 0, 1_000);
+        assert_eq!(pts, 1_000);
+    }
 }
