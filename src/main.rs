@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use env_logger::{Builder, Env};
-use log::*;
+use log::error;
 
 mod input;
 mod output;

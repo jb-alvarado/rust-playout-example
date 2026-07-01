@@ -7,6 +7,7 @@ use std::{
 
 const DEFAULT_FFMPEG_LOG_LEVEL: Level = Level::Warning;
 const FFMPEG_LOG_TARGET: &str = "ffmpeg";
+const SKIPPED_FFMPEG_LOG_MESSAGES: &[&str] = &["Could not update timestamps for skipped samples"];
 
 pub(crate) fn init() {
     ffmpeg_next::util::log::set_level(configured_level());
@@ -77,9 +78,16 @@ unsafe extern "C" fn log_callback(
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
+        .filter(|line| !should_skip_ffmpeg_log(line))
     {
         log_line(level, line);
     }
+}
+
+fn should_skip_ffmpeg_log(message: &str) -> bool {
+    SKIPPED_FFMPEG_LOG_MESSAGES
+        .iter()
+        .any(|skipped| message.contains(skipped))
 }
 
 fn log_line(level: c_int, message: &str) {
